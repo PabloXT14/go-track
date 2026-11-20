@@ -24,6 +24,11 @@ func main() {
 			r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprintln(w, "OK")
 			})
+
+			r.Get("/users/{id:[0-9]+}", func(w http.ResponseWriter, r *http.Request) {
+				id := chi.URLParam(r, "id")
+				fmt.Fprintf(w, "User ID: %s\n", id)
+			})
 		})
 
 		r.Route("/v2", func(r chi.Router) {
@@ -39,7 +44,7 @@ func main() {
 				fmt.Fprintln(w, ip)
 			})
 
-		// GROUPING HANDLERS (allow you to apply middleware to a group of routes)
+		// GROUPING HANDLERS (allow you to apply middleware to a group of routes without having to create a new router path as happen in the Route method above)
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.BasicAuth("", map[string]string{
 				"admin": "admin",
