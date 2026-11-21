@@ -1,13 +1,20 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
-	"time"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
+
+type User struct {
+	Username string `json:"username"`
+	ID       int64  `json:"id,string"`
+	Role     string `json:"role"`
+	Password string `json:"-"` // The password field is omitted from JSON responses for security reasons.
+}
 
 func main() {
 	// BUILD ROUTER
@@ -18,50 +25,59 @@ func main() {
 	r.Use(middleware.RequestID) // A middleware that injects a request ID into the context of each request.
 	r.Use(middleware.Logger)    // A middleware that logs the start and end of each request, along with some useful data about what was requested and how long it took.
 
-	// GROUP ROUTES
-	r.Route("/api", func(r chi.Router) {
-		r.Route("/v1", func(r chi.Router) {
-			r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintln(w, "OK")
-			})
+	// MOCK DATA
+	db := map[int64]User{
+		1: {Username: "John Doe", ID: 1, Role: "admin", Password: "password123"},
+		2: {Username: "Jane Smith", ID: 2, Role: "user", Password: "password456"},
+		3: {Username: "Alice Johnson", ID: 3, Role: "user", Password: "password789"},
+		4: {Username: "Bob Brown", ID: 4, Role: "user", Password: "password012"},
+	}
 
-			r.Get("/users/{id:[0-9]+}", func(w http.ResponseWriter, r *http.Request) {
-				id := chi.URLParam(r, "id")
-				fmt.Fprintf(w, "User ID: %s\n", id)
-			})
-		})
+	r.Group(func(r chi.Router) {
+		r.Use(jsonMiddleware)
 
-		r.Route("/v2", func(r chi.Router) {
-			r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintln(w, "OK")
-			})
-		})
-
-		// ADD MIDDLEWARE TO A SPECIFIC ROUTE
-		r.With(middleware.ClientIPFromRemoteAddr).
-			Get("/ip", func(w http.ResponseWriter, r *http.Request) {
-				ip := middleware.GetClientIP(r.Context())
-				fmt.Fprintln(w, ip)
-			})
-
-		// GROUPING HANDLERS (allow you to apply middleware to a group of routes without having to create a new router path as happen in the Route method above)
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.BasicAuth("", map[string]string{
-				"admin": "admin",
-			}))
-
-			r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintln(w, "Welcome to the admin panel!")
-			})
-		})
-	})
-
-	r.Get("/hour", func(w http.ResponseWriter, r *http.Request) {
-		now := time.Now()
-		fmt.Fprintln(w, now)
+		r.Get("/users/{id:[0-9]+}", handleGetUser(db))
+		r.Post("/users", handlePostUser(db))
 	})
 
 	if err := http.ListenAndServe(":8080", r); err != nil {
 		panic(err)
+	}
+}
+
+func jsonMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func handleGetUser(db map[int64]User) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		idStr := chi.URLParam(r, "id")
+		id, _ := strconv.ParseInt(idStr, 10, 64)
+
+		user, ok := db[id]
+
+		if !ok {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+
+		data, err := json.Marshal(user)
+		if err != nil {
+			http.Error(w, "Error marshalling user data", http.StatusInternalServerError)
+			return
+		}
+
+		w.Write(data)
+	}
+}
+
+func handlePostUser(db map[int64]User) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
 	}
 }
