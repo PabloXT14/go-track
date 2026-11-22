@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -52,17 +54,23 @@ func jsonMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func JSONError(w http.ResponseWriter, message string, status int) {
+	w.WriteHeader(status)
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"error": message,
+	})
+}
+
 func handleGetUser(db map[int64]User) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
 		idStr := chi.URLParam(r, "id")
 		id, _ := strconv.ParseInt(idStr, 10, 64)
 
 		user, ok := db[id]
 
 		if !ok {
-			http.Error(w, "User not found", http.StatusNotFound)
+			JSONError(w, "User not found", http.StatusNotFound)
 			return
 		}
 
@@ -78,6 +86,33 @@ func handleGetUser(db map[int64]User) http.HandlerFunc {
 
 func handlePostUser(db map[int64]User) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// LIMIT REQUEST BODY SIZE
+		r.Body = http.MaxBytesReader(w, r.Body, 10000) // Limit the request body size to 10KB
 
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			var maxErr *http.MaxBytesError
+			if ok := errors.As(err, &maxErr); ok {
+				JSONError(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+
+			JSONError(w, "Error reading request body", http.StatusInternalServerError)
+			return
+		}
+		defer r.Body.Close()
+
+		var newUser User
+		if err := json.Unmarshal(data, &newUser); err != nil {
+			JSONError(w, "Invalid JSON in request body", http.StatusUnprocessableEntity)
+			return
+		}
+
+		newID := int64(len(db) + 1)
+		newUser.ID = newID
+		db[newID] = newUser
+
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(newUser)
 	}
 }
