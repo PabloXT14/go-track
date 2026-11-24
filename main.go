@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,6 +11,25 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
+
+type Response struct {
+	Error string `json:"error,omitempty"` // The error field is omitted from JSON responses if it is empty.
+	Data  any    `json:"data,omitempty"`  // The data field is omitted from JSON responses if it is empty.
+}
+
+func sendJSON(w http.ResponseWriter, response Response, status int) {
+	data, err := json.Marshal(response)
+	if err != nil {
+		sendJSON(w, Response{Error: "Error marshalling response"}, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(status)
+	if _, err := w.Write(data); err != nil {
+		fmt.Println("Error writing response:", err)
+		return
+	}
+}
 
 type User struct {
 	Username string `json:"username"`
@@ -54,14 +74,6 @@ func jsonMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func JSONError(w http.ResponseWriter, message string, status int) {
-	w.WriteHeader(status)
-
-	json.NewEncoder(w).Encode(map[string]string{
-		"error": message,
-	})
-}
-
 func handleGetUser(db map[int64]User) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -70,17 +82,11 @@ func handleGetUser(db map[int64]User) http.HandlerFunc {
 		user, ok := db[id]
 
 		if !ok {
-			JSONError(w, "User not found", http.StatusNotFound)
+			sendJSON(w, Response{Error: "User not found"}, http.StatusNotFound)
 			return
 		}
 
-		data, err := json.Marshal(user)
-		if err != nil {
-			http.Error(w, "Error marshalling user data", http.StatusInternalServerError)
-			return
-		}
-
-		w.Write(data)
+		sendJSON(w, Response{Data: user}, http.StatusCreated)
 	}
 }
 
@@ -93,18 +99,18 @@ func handlePostUser(db map[int64]User) http.HandlerFunc {
 		if err != nil {
 			var maxErr *http.MaxBytesError
 			if ok := errors.As(err, &maxErr); ok {
-				JSONError(w, "Request body too large", http.StatusRequestEntityTooLarge)
+				sendJSON(w, Response{Error: "Request body too large"}, http.StatusRequestEntityTooLarge)
 				return
 			}
 
-			JSONError(w, "Error reading request body", http.StatusInternalServerError)
+			sendJSON(w, Response{Error: "Error reading request body"}, http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
 
 		var newUser User
 		if err := json.Unmarshal(data, &newUser); err != nil {
-			JSONError(w, "Invalid JSON in request body", http.StatusUnprocessableEntity)
+			sendJSON(w, Response{Error: "Invalid JSON in request body"}, http.StatusUnprocessableEntity)
 			return
 		}
 
@@ -113,6 +119,6 @@ func handlePostUser(db map[int64]User) http.HandlerFunc {
 		db[newID] = newUser
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(newUser)
+		sendJSON(w, Response{Data: newUser}, http.StatusCreated)
 	}
 }
