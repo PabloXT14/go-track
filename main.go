@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -20,13 +23,23 @@ type Response struct {
 func sendJSON(w http.ResponseWriter, response Response, status int) {
 	data, err := json.Marshal(response)
 	if err != nil {
+		slog.Error(
+			"Error marshalling response",
+			slog.String("error", err.Error()),
+		)
+
 		sendJSON(w, Response{Error: "Error marshalling response"}, http.StatusInternalServerError)
+
 		return
 	}
 
 	w.WriteHeader(status)
 	if _, err := w.Write(data); err != nil {
-		fmt.Println("Error writing response:", err)
+		slog.Error(
+			"Error writing response",
+			slog.String("error", err.Error()),
+		)
+
 		return
 	}
 }
@@ -39,6 +52,47 @@ type User struct {
 }
 
 func main() {
+	// CONFIG LOGGER
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	slog.SetDefault(logger)
+
+	// CONFIG HTTP SERVER WITH CUSTOM ERROR LOGGING
+	// server := http.Server{
+	// 	ErrorLog: slog.NewLogLogger(slog.NewJSONHandler(os.Stdout, nil), slog.LevelError),
+	// }
+	// _ = &server
+
+	// LOGGING
+	slog.Debug(
+		"Debug: This is a debug message",
+		slog.String("version", "1.0.0"),
+	) // Debug level logs are typically used for development and debugging purposes, and may not be shown in production environments. (obs: by default slog just logs info, warn and error levels)
+
+	slog.Info(
+		"Starting application",
+		slog.String("version", "1.0.0"),
+	)
+
+	slog.Warn(
+		"Warning: This is a warning message",
+		slog.String("version", "1.0.0"),
+	)
+
+	slog.Error(
+		"Error: This is a error message",
+		slog.String("version", "1.0.0"),
+	)
+
+	logger.LogAttrs(
+		context.Background(),
+		slog.LevelInfo,
+		"We have a http request",
+		slog.String("method", http.MethodDelete),
+		slog.Duration("time_taken", time.Second),
+		slog.String("user_agent", "Go-http-client/1.1"),
+	)
+
 	// BUILD ROUTER
 	r := chi.NewMux()
 
@@ -103,7 +157,11 @@ func handlePostUser(db map[int64]User) http.HandlerFunc {
 				return
 			}
 
-			sendJSON(w, Response{Error: "Error reading request body"}, http.StatusInternalServerError)
+			slog.Error(
+				"Something went wrong while reading the request body",
+				slog.String("error", err.Error()),
+			)
+			sendJSON(w, Response{Error: "Something went wrong"}, http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
