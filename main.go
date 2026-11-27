@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.uber.org/zap"
+	"go.uber.org/zap/exp/zapslog"
 )
 
 type Response struct {
@@ -51,9 +53,61 @@ type User struct {
 	Password string `json:"-"` // The password field is omitted from JSON responses for security reasons.
 }
 
+type Password string
+
+func (p Password) String() string {
+	return "[REDACTED]" // The password is represented as "[REDACTED]" to avoid exposing sensitive information.
+}
+
+func (p Password) LogValue() slog.Value {
+	return slog.StringValue("[REDACTED]") // The password is logged as "[REDACTED]" to avoid exposing sensitive information.
+}
+
+func (u User) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("username", u.Username),
+		slog.Int64("id", u.ID),
+		slog.String("role", u.Role),
+		slog.String("password", "[REDACTED]"), // The password is logged as "[REDACTED]" to avoid exposing sensitive information.
+	)
+}
+
+const LowestLevel = slog.Level(-50) // Define a custom log level that is lower than the default levels (Debug, Info, Warn, Error).
+
 func main() {
+	// CONFIG ZAP LOGGER
+	zapLogger, _ := zap.NewProduction()
+	defer zapLogger.Sync() // Flush any buffered log entries before the program exits.
+
+	zapHandler := zapslog.NewHandler(
+		zapLogger.Core(),
+		nil,
+	)
+
+	zapWithSlog := slog.New(zapHandler)
+
+	zapWithSlog.Info(
+		"Log with zap logger",
+		slog.String("environment", "development"),
+	)
+
 	// CONFIG LOGGER
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	opts := &slog.HandlerOptions{
+		AddSource: true,        // AddSource: true enables the inclusion of source code information (file name and line number) in log entries.
+		Level:     LowestLevel, // Minimum log level to be logged.
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr { // ReplaceAttr: A function that allows you to modify log attributes before they are logged.
+			if a.Key == "level" {
+				level := a.Value.String()
+				if level == "DEBUG-46" {
+					a.Value = slog.StringValue("LOWEST")
+				}
+			}
+
+			return a
+		},
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, opts))
 
 	slog.SetDefault(logger)
 
@@ -88,9 +142,50 @@ func main() {
 		context.Background(),
 		slog.LevelInfo,
 		"We have a http request",
-		slog.String("method", http.MethodDelete),
+		slog.Group(
+			"htt_data",
+			slog.String("method", http.MethodDelete),
+			slog.Int("status", http.StatusNotFound),
+		),
 		slog.Duration("time_taken", time.Second),
 		slog.String("user_agent", "Go-http-client/1.1"),
+	)
+
+	logger.LogAttrs(
+		context.Background(),
+		LowestLevel,
+		"Lowest level log message",
+	)
+
+	// LOGGING WITH
+	loggerWithVersion := logger.With(
+		slog.Group(
+			"app_info",
+			slog.String("version", "1.0.0"),
+		),
+	)
+
+	loggerWithVersion.Info("Starting application with version context")
+
+	// PERSONALIZE VALUES WITH INTERFACE IMPLEMENTATION
+	password := Password("mysecretpassword")
+	slog.Info(
+		"User login attempt",
+		slog.String("username", "johndoe"),
+		slog.Any("password", password), // The password will be logged as "[REDACTED]" due to the LogValue method implementation.
+	)
+
+	// OBS: if we implement on User struct the Password struct it won't hide the password, because the LogValue method is not called recursively on nested structs. The LogValue method is only called on the top-level struct that implements it. So, if we want to hide the password in the User struct, we need to implement the LogValue method on the User struct and return a slog.GroupValue that includes the password field with a value of "[REDACTED]".
+	user := User{
+		Username: "johndoe",
+		ID:       1,
+		Role:     "admin",
+		Password: "mysecretpassword",
+	}
+
+	slog.Info(
+		"User details",
+		slog.Any("user", user), // The password will be logged as "[REDACTED]" due to the LogValue method implementation.
 	)
 
 	// BUILD ROUTER
